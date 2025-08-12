@@ -1,10 +1,9 @@
 
-import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../../lib/auth';
-import { PrismaClient } from '@prisma/client';
 
-const prisma = new PrismaClient();
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,45 +14,45 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url);
-    const startDate = searchParams.get('startDate');
-    const endDate = searchParams.get('endDate');
+    const date = searchParams.get('date');
     const doctorId = searchParams.get('doctorId');
-    const status = searchParams.get('status');
-
-    // Construir filtros
-    const where: any = {};
+    const limit = parseInt(searchParams.get('limit') || '50');
     
-    if (startDate && endDate) {
-      where.date = {
+    let whereClause: any = {};
+    
+    if (date) {
+      const startDate = new Date(date);
+      const endDate = new Date(date);
+      endDate.setDate(endDate.getDate() + 1);
+      
+      whereClause.date = {
         gte: startDate,
-        lte: endDate
+        lt: endDate
       };
     }
     
     if (doctorId) {
-      where.doctorId = doctorId;
-    }
-    
-    if (status) {
-      where.status = status;
+      whereClause.doctorId = doctorId;
     }
 
     const appointments = await prisma.appointment.findMany({
-      where,
+      where: whereClause,
+      take: limit,
       include: {
         patient: {
           select: {
             id: true,
             firstName: true,
             lastName: true,
-            phone: true,
-            email: true
+            numeroExpediente: true,
+            phone: true
           }
         },
         doctor: {
           select: {
             id: true,
-            name: true,
+            firstName: true,
+            lastName: true,
             especialidad: true
           }
         }
@@ -64,28 +63,34 @@ export async function GET(request: NextRequest) {
       ]
     });
 
-    // Formatear respuesta
-    const formattedAppointments = appointments.map(apt => ({
+    // Transformar los datos para que coincidan con la interfaz del frontend
+    const transformedAppointments = appointments.map(apt => ({
       id: apt.id,
       patientId: apt.patientId,
       doctorId: apt.doctorId,
       patientName: `${apt.patient.firstName} ${apt.patient.lastName}`,
-      doctorName: apt.doctor.name || 'Doctor sin nombre',
-      date: apt.date.toISOString().split('T')[0],
+      doctorName: `${apt.doctor.firstName} ${apt.doctor.lastName}`,
+      date: apt.date.toISOString().split('T')[0], // YYYY-MM-DD format
       startTime: apt.startTime,
       endTime: apt.endTime,
       type: apt.type,
-      reason: apt.reason,
       status: apt.status,
+      reason: apt.reason,
       notes: apt.notes,
       duration: apt.duration,
-      patient: apt.patient,
-      doctor: apt.doctor,
-      createdAt: apt.createdAt,
-      updatedAt: apt.updatedAt
+      patient: {
+        firstName: apt.patient.firstName,
+        lastName: apt.patient.lastName,
+        phone: apt.patient.phone
+      },
+      doctor: {
+        name: `${apt.doctor.firstName} ${apt.doctor.lastName}`,
+        especialidad: apt.doctor.especialidad
+      }
     }));
 
-    return NextResponse.json(formattedAppointments);
+    return NextResponse.json(transformedAppointments);
+
   } catch (error) {
     console.error('Error al obtener citas:', error);
     return NextResponse.json(
@@ -103,7 +108,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
     }
 
-    const body = await request.json();
     const {
       patientId,
       doctorId,
@@ -112,21 +116,12 @@ export async function POST(request: NextRequest) {
       endTime,
       type,
       reason,
-      status = 'Programada',
       notes,
-      duration = 30
-    } = body;
+      duration
+    } = await request.json();
 
-    // Validaciones
-    if (!patientId || !doctorId || !date || !startTime || !endTime || !type) {
-      return NextResponse.json(
-        { error: 'Faltan campos requeridos' },
-        { status: 400 }
-      );
-    }
-
-    // Verificar si ya existe una cita en el mismo horario para el mismo doctor
-    const existingAppointment = await prisma.appointment.findFirst({
+    // Check for conflicts
+    const conflictingAppointment = await prisma.appointment.findFirst({
       where: {
         doctorId,
         date: new Date(date),
@@ -153,15 +148,14 @@ export async function POST(request: NextRequest) {
       }
     });
 
-    if (existingAppointment) {
+    if (conflictingAppointment) {
       return NextResponse.json(
-        { error: 'Ya existe una cita en este horario para el doctor seleccionado' },
+        { error: 'Ya existe una cita en este horario para el doctor' },
         { status: 400 }
       );
     }
 
-    // Crear la cita
-    const appointment = await prisma.appointment.create({
+    const newAppointment = await prisma.appointment.create({
       data: {
         patientId,
         doctorId,
@@ -169,10 +163,10 @@ export async function POST(request: NextRequest) {
         startTime,
         endTime,
         type,
-        reason,
-        status,
-        notes,
-        duration
+        reason: reason || null,
+        notes: notes || null,
+        duration: duration || 30,
+        status: 'Programada'
       },
       include: {
         patient: {
@@ -180,42 +174,23 @@ export async function POST(request: NextRequest) {
             id: true,
             firstName: true,
             lastName: true,
-            phone: true,
-            email: true
+            numeroExpediente: true,
+            phone: true
           }
         },
         doctor: {
           select: {
             id: true,
-            name: true,
+            firstName: true,
+            lastName: true,
             especialidad: true
           }
         }
       }
     });
 
-    // Formatear respuesta
-    const formattedAppointment = {
-      id: appointment.id,
-      patientId: appointment.patientId,
-      doctorId: appointment.doctorId,
-      patientName: `${appointment.patient.firstName} ${appointment.patient.lastName}`,
-      doctorName: appointment.doctor.name || 'Doctor sin nombre',
-      date: appointment.date.toISOString().split('T')[0],
-      startTime: appointment.startTime,
-      endTime: appointment.endTime,
-      type: appointment.type,
-      reason: appointment.reason,
-      status: appointment.status,
-      notes: appointment.notes,
-      duration: appointment.duration,
-      patient: appointment.patient,
-      doctor: appointment.doctor,
-      createdAt: appointment.createdAt,
-      updatedAt: appointment.updatedAt
-    };
+    return NextResponse.json(newAppointment, { status: 201 });
 
-    return NextResponse.json(formattedAppointment, { status: 201 });
   } catch (error) {
     console.error('Error al crear cita:', error);
     return NextResponse.json(
@@ -224,3 +199,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

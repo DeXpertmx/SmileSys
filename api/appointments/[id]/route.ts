@@ -1,81 +1,9 @@
 
+
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../../../lib/auth';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
-
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  try {
-    const session = await getServerSession(authOptions);
-    
-    if (!session) {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
-    }
-
-    const appointment = await prisma.appointment.findUnique({
-      where: { id: params.id },
-      include: {
-        patient: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            phone: true,
-            email: true
-          }
-        },
-        doctor: {
-          select: {
-            id: true,
-            name: true,
-            especialidad: true
-          }
-        }
-      }
-    });
-
-    if (!appointment) {
-      return NextResponse.json(
-        { error: 'Cita no encontrada' },
-        { status: 404 }
-      );
-    }
-
-    // Formatear respuesta
-    const formattedAppointment = {
-      id: appointment.id,
-      patientId: appointment.patientId,
-      doctorId: appointment.doctorId,
-      patientName: `${appointment.patient.firstName} ${appointment.patient.lastName}`,
-      doctorName: appointment.doctor.name || 'Doctor sin nombre',
-      date: appointment.date.toISOString().split('T')[0],
-      startTime: appointment.startTime,
-      endTime: appointment.endTime,
-      type: appointment.type,
-      reason: appointment.reason,
-      status: appointment.status,
-      notes: appointment.notes,
-      duration: appointment.duration,
-      patient: appointment.patient,
-      doctor: appointment.doctor,
-      createdAt: appointment.createdAt,
-      updatedAt: appointment.updatedAt
-    };
-
-    return NextResponse.json(formattedAppointment);
-  } catch (error) {
-    console.error('Error al obtener cita:', error);
-    return NextResponse.json(
-      { error: 'Error interno del servidor' },
-      { status: 500 }
-    );
-  }
-}
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
 
 export async function PUT(
   request: NextRequest,
@@ -88,7 +16,7 @@ export async function PUT(
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
     }
 
-    const body = await request.json();
+    const { id } = params;
     const {
       patientId,
       doctorId,
@@ -97,75 +25,60 @@ export async function PUT(
       endTime,
       type,
       reason,
-      status,
       notes,
-      duration
-    } = body;
+      duration,
+      status
+    } = await request.json();
 
-    // Verificar si la cita existe
-    const existingAppointment = await prisma.appointment.findUnique({
-      where: { id: params.id }
+    // Check for conflicts with other appointments (excluding current one)
+    const conflictingAppointment = await prisma.appointment.findFirst({
+      where: {
+        id: { not: id },
+        doctorId,
+        date: new Date(date),
+        OR: [
+          {
+            AND: [
+              { startTime: { lte: startTime } },
+              { endTime: { gt: startTime } }
+            ]
+          },
+          {
+            AND: [
+              { startTime: { lt: endTime } },
+              { endTime: { gte: endTime } }
+            ]
+          },
+          {
+            AND: [
+              { startTime: { gte: startTime } },
+              { endTime: { lte: endTime } }
+            ]
+          }
+        ]
+      }
     });
 
-    if (!existingAppointment) {
+    if (conflictingAppointment) {
       return NextResponse.json(
-        { error: 'Cita no encontrada' },
-        { status: 404 }
+        { error: 'Ya existe una cita en este horario para el doctor' },
+        { status: 400 }
       );
     }
 
-    // Verificar conflictos de horario (excluyendo la cita actual)
-    if (doctorId && date && startTime && endTime) {
-      const conflictingAppointment = await prisma.appointment.findFirst({
-        where: {
-          id: { not: params.id },
-          doctorId,
-          date: new Date(date),
-          OR: [
-            {
-              AND: [
-                { startTime: { lte: startTime } },
-                { endTime: { gt: startTime } }
-              ]
-            },
-            {
-              AND: [
-                { startTime: { lt: endTime } },
-                { endTime: { gte: endTime } }
-              ]
-            },
-            {
-              AND: [
-                { startTime: { gte: startTime } },
-                { endTime: { lte: endTime } }
-              ]
-            }
-          ]
-        }
-      });
-
-      if (conflictingAppointment) {
-        return NextResponse.json(
-          { error: 'Ya existe una cita en este horario para el doctor seleccionado' },
-          { status: 400 }
-        );
-      }
-    }
-
-    // Actualizar la cita
-    const appointment = await prisma.appointment.update({
-      where: { id: params.id },
+    const updatedAppointment = await prisma.appointment.update({
+      where: { id },
       data: {
-        ...(patientId && { patientId }),
-        ...(doctorId && { doctorId }),
-        ...(date && { date: new Date(date) }),
-        ...(startTime && { startTime }),
-        ...(endTime && { endTime }),
-        ...(type && { type }),
-        ...(reason !== undefined && { reason }),
-        ...(status && { status }),
-        ...(notes !== undefined && { notes }),
-        ...(duration && { duration })
+        patientId,
+        doctorId,
+        date: new Date(date),
+        startTime,
+        endTime,
+        type,
+        reason: reason || null,
+        notes: notes || null,
+        duration: duration || 30,
+        status: status || 'Programada'
       },
       include: {
         patient: {
@@ -173,42 +86,23 @@ export async function PUT(
             id: true,
             firstName: true,
             lastName: true,
-            phone: true,
-            email: true
+            numeroExpediente: true,
+            phone: true
           }
         },
         doctor: {
           select: {
             id: true,
-            name: true,
+            firstName: true,
+            lastName: true,
             especialidad: true
           }
         }
       }
     });
 
-    // Formatear respuesta
-    const formattedAppointment = {
-      id: appointment.id,
-      patientId: appointment.patientId,
-      doctorId: appointment.doctorId,
-      patientName: `${appointment.patient.firstName} ${appointment.patient.lastName}`,
-      doctorName: appointment.doctor.name || 'Doctor sin nombre',
-      date: appointment.date.toISOString().split('T')[0],
-      startTime: appointment.startTime,
-      endTime: appointment.endTime,
-      type: appointment.type,
-      reason: appointment.reason,
-      status: appointment.status,
-      notes: appointment.notes,
-      duration: appointment.duration,
-      patient: appointment.patient,
-      doctor: appointment.doctor,
-      createdAt: appointment.createdAt,
-      updatedAt: appointment.updatedAt
-    };
+    return NextResponse.json(updatedAppointment);
 
-    return NextResponse.json(formattedAppointment);
   } catch (error) {
     console.error('Error al actualizar cita:', error);
     return NextResponse.json(
@@ -229,27 +123,14 @@ export async function DELETE(
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
     }
 
-    // Verificar si la cita existe
-    const existingAppointment = await prisma.appointment.findUnique({
-      where: { id: params.id }
-    });
+    const { id } = params;
 
-    if (!existingAppointment) {
-      return NextResponse.json(
-        { error: 'Cita no encontrada' },
-        { status: 404 }
-      );
-    }
-
-    // Eliminar la cita
     await prisma.appointment.delete({
-      where: { id: params.id }
+      where: { id }
     });
 
-    return NextResponse.json(
-      { message: 'Cita eliminada exitosamente' },
-      { status: 200 }
-    );
+    return NextResponse.json({ message: 'Cita eliminada' });
+
   } catch (error) {
     console.error('Error al eliminar cita:', error);
     return NextResponse.json(
@@ -258,3 +139,4 @@ export async function DELETE(
     );
   }
 }
+

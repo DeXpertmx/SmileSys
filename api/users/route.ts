@@ -1,89 +1,56 @@
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 
 export async function GET(request: NextRequest) {
   try {
+    const session = await getServerSession(authOptions);
+    
+    if (!session) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const role = searchParams.get('role');
-    const search = searchParams.get('search');
-    const page = parseInt(searchParams.get('page') || '1');
-    const pageSize = parseInt(searchParams.get('limit') || '20');
-
-    let whereClause: any = {};
+    const limit = parseInt(searchParams.get('limit') || '50');
+    
+    let whereClause = {};
     
     if (role) {
-      whereClause.role = role;
-    }
-    
-    if (search) {
-      whereClause.OR = [
-        { firstName: { contains: search, mode: 'insensitive' } },
-        { lastName: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } }
-      ];
+      whereClause = { role };
     }
 
     const users = await prisma.user.findMany({
       where: whereClause,
-      orderBy: [
-        { lastName: 'asc' },
-        { firstName: 'asc' }
-      ],
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      take: limit,
       select: {
         id: true,
         firstName: true,
         lastName: true,
         email: true,
-        phone: true,
         role: true,
         especialidad: true,
-        active: true,
-        createdAt: true
-      }
+        phone: true,
+        createdAt: true,
+        updatedAt: true
+      },
+      orderBy: [
+        { firstName: 'asc' },
+        { lastName: 'asc' }
+      ]
     });
-
-    const total = await prisma.user.count({ where: whereClause });
 
     return NextResponse.json({
       users,
-      total,
-      page,
-      pageSize,
-      totalPages: Math.ceil(total / pageSize)
+      total: users.length
     });
+
   } catch (error) {
     console.error('Error al obtener usuarios:', error);
     return NextResponse.json(
-      { error: 'Error al obtener usuarios' },
-      { status: 500 }
-    );
-  }
-}
-
-export async function POST(request: NextRequest) {
-  try {
-    const data = await request.json();
-    
-    const user = await prisma.user.create({
-      data: {
-        firstName: data.firstName,
-        lastName: data.lastName,
-        email: data.email,
-        phone: data.phone,
-        role: data.role,
-        especialidad: data.especialidad,
-        active: data.active ?? true
-      }
-    });
-
-    return NextResponse.json(user, { status: 201 });
-  } catch (error) {
-    console.error('Error creating user:', error);
-    return NextResponse.json(
-      { error: 'Error al crear el usuario' },
+      { error: 'Error interno del servidor' },
       { status: 500 }
     );
   }

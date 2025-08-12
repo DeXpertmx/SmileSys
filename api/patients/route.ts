@@ -1,64 +1,71 @@
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const limit = searchParams.get('limit');
-    const search = searchParams.get('search');
-    const page = parseInt(searchParams.get('page') || '1');
-    const pageSize = limit ? parseInt(limit) : 20;
+    const session = await getServerSession(authOptions);
+    
+    if (!session) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    }
 
-    let whereClause: any = {};
+    const { searchParams } = new URL(request.url);
+    const limit = parseInt(searchParams.get('limit') || '50');
+    const search = searchParams.get('search') || '';
+    
+    let whereClause = {};
     
     if (search) {
       whereClause = {
         OR: [
           { firstName: { contains: search, mode: 'insensitive' } },
           { lastName: { contains: search, mode: 'insensitive' } },
-          { email: { contains: search, mode: 'insensitive' } },
-          { numeroExpediente: { contains: search, mode: 'insensitive' } }
+          { numeroExpediente: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } }
         ]
       };
     }
 
     const patients = await prisma.patient.findMany({
       where: whereClause,
-      orderBy: [
-        { lastName: 'asc' },
-        { firstName: 'asc' }
-      ],
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      take: limit,
       select: {
         id: true,
         firstName: true,
         lastName: true,
+        numeroExpediente: true,
         email: true,
         phone: true,
-        numeroExpediente: true,
-        birthDate: true,
         address: true,
+        city: true,
+        birthDate: true,
+        gender: true,
         occupation: true,
+        emergencyContact: true,
+        emergencyPhone: true,
+        bloodType: true,
+        allergies: true,
         medicalHistory: true,
-        createdAt: true
-      }
+        insuranceInfo: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true
+      },
+      orderBy: [
+        { firstName: 'asc' },
+        { lastName: 'asc' }
+      ]
     });
 
-    const total = await prisma.patient.count({ where: whereClause });
+    return NextResponse.json({ patients, total: patients.length });
 
-    return NextResponse.json({
-      patients,
-      total,
-      page,
-      pageSize,
-      totalPages: Math.ceil(total / pageSize)
-    });
   } catch (error) {
-    console.error('Error fetching patients:', error);
+    console.error('Error al obtener pacientes:', error);
     return NextResponse.json(
-      { error: 'Error al obtener los pacientes' },
+      { error: 'Error interno del servidor' },
       { status: 500 }
     );
   }
@@ -66,27 +73,77 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const data = await request.json();
+    const session = await getServerSession(authOptions);
     
-    const patient = await prisma.patient.create({
+    if (!session) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    }
+
+    const {
+      firstName,
+      lastName,
+      email,
+      phone,
+      address,
+      city,
+      birthDate,
+      gender,
+      occupation,
+      emergencyContact,
+      emergencyPhone,
+      bloodType,
+      allergies,
+      medicalHistory,
+      insuranceInfo,
+      status
+    } = await request.json();
+
+    // Check if patient already exists by email if provided
+    if (email) {
+      const existingPatient = await prisma.patient.findFirst({
+        where: { email }
+      });
+
+      if (existingPatient) {
+        return NextResponse.json(
+          { error: 'Ya existe un paciente con este email' },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Generate patient number
+    const patientsCount = await prisma.patient.count();
+    const numeroExpediente = `P${String(patientsCount + 1).padStart(6, '0')}`;
+
+    const newPatient = await prisma.patient.create({
       data: {
-        firstName: data.firstName,
-        lastName: data.lastName,
-        email: data.email,
-        phone: data.phone,
-        birthDate: data.birthDate ? new Date(data.birthDate) : undefined,
-        address: data.address,
-        occupation: data.occupation,
-        medicalHistory: data.medicalHistory,
-        numeroExpediente: data.numeroExpediente || `EXP-${Date.now()}`
+        firstName,
+        lastName,
+        email,
+        phone,
+        numeroExpediente,
+        address: address || null,
+        city: city || null,
+        birthDate: birthDate ? new Date(birthDate) : null,
+        gender: gender || null,
+        occupation: occupation || null,
+        emergencyContact: emergencyContact || null,
+        emergencyPhone: emergencyPhone || null,
+        bloodType: bloodType || null,
+        allergies: allergies || null,
+        medicalHistory: medicalHistory || null,
+        insuranceInfo: insuranceInfo || null,
+        status: status || 'Activo'
       }
     });
 
-    return NextResponse.json(patient, { status: 201 });
+    return NextResponse.json(newPatient, { status: 201 });
+
   } catch (error) {
-    console.error('Error creating patient:', error);
+    console.error('Error al crear paciente:', error);
     return NextResponse.json(
-      { error: 'Error al crear el paciente' },
+      { error: 'Error interno del servidor' },
       { status: 500 }
     );
   }
