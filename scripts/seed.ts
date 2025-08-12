@@ -1,6 +1,7 @@
 
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import seedSettings from './seed-settings';
 
 const prisma = new PrismaClient();
 
@@ -48,7 +49,7 @@ async function main() {
       name: 'Dra. Ana Martínez',
       role: 'Dentista',
       phone: '555-0456',
-      specialization: 'Odontología General'
+      especialidad: 'Odontología General'
     }
   });
 
@@ -480,6 +481,10 @@ async function main() {
   console.log(`   💰 Facturas: ${await prisma.invoice.count()}`);
   console.log(`   💳 Pagos: ${await prisma.payment.count()}`);
   console.log(`   📋 Plantillas de recetas: ${await prisma.prescriptionTemplate.count()}`);
+  
+  // Crear configuraciones por defecto
+  console.log('\n⚙️ Creando configuraciones del sistema...');
+  await seedSettings();
   
   console.log('\n🔐 Credenciales de prueba:');
   console.log('   Admin: john@doe.com / johndoe123');

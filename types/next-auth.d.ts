@@ -12,7 +12,7 @@ declare module "next-auth" {
       firstName?: string;
       lastName?: string;
       phone?: string;
-      specialization?: string;
+      especialidad?: string;
     };
   }
 
@@ -22,7 +22,7 @@ declare module "next-auth" {
     firstName?: string;
     lastName?: string;
     phone?: string;
-    specialization?: string;
+    especialidad?: string;
   }
 }
 
@@ -32,6 +32,6 @@ declare module "next-auth/jwt" {
     firstName?: string;
     lastName?: string;
     phone?: string;
-    specialization?: string;
+    especialidad?: string;
   }
 }

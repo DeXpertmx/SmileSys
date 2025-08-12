@@ -32,13 +32,20 @@ export function formatTime(time: string): string {
 }
 
 // Nueva función para formatear moneda
-export function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('es-ES', {
+export function formatCurrency(amount: number, currency: string = 'USD', locale: string = 'en-US'): string {
+  return new Intl.NumberFormat(locale, {
     style: 'currency',
-    currency: 'EUR',
+    currency: currency,
     minimumFractionDigits: 0,
     maximumFractionDigits: 2
   }).format(amount);
+}
+
+// Función para formatear moneda con configuración específica
+export function formatCurrencyWithSettings(amount: number, settings?: { currency?: string; locale?: string }): string {
+  const currency = settings?.currency || 'USD';
+  const locale = settings?.locale || 'en-US';
+  return formatCurrency(amount, currency, locale);
 }
 
 // Función para generar colores consistentes

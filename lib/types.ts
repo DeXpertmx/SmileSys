@@ -7,7 +7,7 @@ export interface User {
   email: string;
   role: string;
   phone?: string;
-  specialization?: string;
+  especialidad?: string;
 }
 
 export interface Patient {

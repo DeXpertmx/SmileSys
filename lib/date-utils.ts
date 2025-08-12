@@ -48,3 +48,8 @@ export const toDateInputFormat = (date: string | Date): string => {
   
   return `${year}-${month}-${day}`;
 };
+
+export const formatTime = (time: string): string => {
+  if (!time) return '';
+  return time;
+};
